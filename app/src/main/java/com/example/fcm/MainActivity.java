@@ -1,42 +1,95 @@
 package com.example.fcm;
 
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-
 import android.Manifest;
 import android.annotation.TargetApi;
+import android.app.DownloadManager;
+import android.app.ProgressDialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.net.ConnectivityManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
-import android.webkit.CookieManager;
 import android.webkit.CookieSyncManager;
+import android.webkit.DownloadListener;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
-
-import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.Task;
-//import com.google.firebase.messaging.FirebaseMessaging;
-
+import org.eclipse.paho.android.service.MqttAndroidClient;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private WebView preload;
     private static final String TAG = MainActivity.class.getSimpleName();
     public static String token = "";
+    MqttAndroidClient client;
+    private BroadcastReceiver mNetworkReceiver;
+    public static ProgressDialog progressDialog;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        Intent mainService = new Intent(MainActivity.this, MainService.class);
+
+        startService(mainService);
+        loadPage();
+        mNetworkReceiver = new MyBroadcastReceiver();
+        registerNetworkBroadcastForNougat();
+
+    }
+
+    private void registerNetworkBroadcastForNougat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            registerReceiver(mNetworkReceiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            registerReceiver(mNetworkReceiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+        }
+    }
+
+    protected void unregisterNetworkChanges() {
+        try {
+            unregisterReceiver(mNetworkReceiver);
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void dialog(boolean value, Context context){
+        if (token == "onPageFinished") {
+            if(value){
+                progressDialog.dismiss();
+            }else {
+                progressDialog = new ProgressDialog(context);
+                progressDialog.setMessage("Waiting for network...");
+                progressDialog.setCancelable(false);
+                progressDialog.show();
+            }
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        unregisterNetworkChanges();
+    }
+
+    void loadPage() {
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE);
 
         preload =(WebView)findViewById(R.id.preload);
@@ -58,41 +111,32 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void run() {
                         request.grant(request.getResources());
-//                        Log.d(TAG, request.getOrigin().toString());
-//                        if(request.getOrigin().toString().equals("https://webcamera.io/")) {
-//                            Log.d(TAG, "GRANTED");
-//                            request.grant(request.getResources());
-//                        } else {
-//                            Log.d(TAG, "DENIED");
-//                            request.deny();
-//                        }
                     }
                 });
             }
+        });
 
+        webView.setDownloadListener(new DownloadListener() {
 
+            @Override
+            public void onDownloadStart(String url, String userAgent,
+                                        String contentDisposition, String mimetype,
+                                        long contentLength) {
+                DownloadManager.Request request = new DownloadManager.Request(
+                        Uri.parse(url));
+
+                request.allowScanningByMediaScanner();
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED); //Notify client once download is completed!
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "app-release.apk");
+                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                dm.enqueue(request);
+                Toast.makeText(getApplicationContext(), "Downloading File", //To notify the Client that the file is being downloaded
+                        Toast.LENGTH_LONG).show();
+
+            }
         });
         permission();
         CookieSyncManager.createInstance(this);
-
-//        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(new OnCompleteListener<String>() {
-//
-//            @Override
-//            public void onComplete(@NonNull Task<String> task) {
-//                token = task.getResult();
-//                Log.d(TAG, "Token:" + token);
-//
-//                CookieManager cookieManager = CookieManager.getInstance();
-//                cookieManager.setAcceptCookie(true);
-//
-//                cookieManager.setCookie("https://chat.chek.agency", "firebase="+ token);
-//                CookieSyncManager.getInstance().sync();
-//
-//                String cookie = cookieManager.getCookie("https://chat.chek.agency");
-//                Log.d(TAG, "cookie ------>"+cookie);
-//                Log.d(TAG, "token ------>"+token);
-//            }
-//        });
 
     }
 
@@ -112,6 +156,7 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void run() {
                     preload.setVisibility(View.GONE);
+                    token = "onPageFinished";
                 }
             }, 1000);
         }
@@ -125,7 +170,6 @@ public class MainActivity extends AppCompatActivity {
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
             view.loadUrl(url);
             return true;
-
         }
 
         @Override
@@ -135,7 +179,7 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
-    void permission() {
+    private void permission() {
 
         if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             Log.d(TAG, "You already granted the permission camera ------>");
@@ -149,4 +193,15 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 100);
         }
     }
+
+    public static boolean checkInternetConnection(Context context) {
+
+        ConnectivityManager con_manager = (ConnectivityManager)
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        return (con_manager.getActiveNetworkInfo() != null
+                && con_manager.getActiveNetworkInfo().isAvailable()
+                && con_manager.getActiveNetworkInfo().isConnected());
+    }
+
 }
